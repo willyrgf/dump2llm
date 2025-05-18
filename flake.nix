@@ -1,5 +1,6 @@
 {
-  description = "dump2llm: dumps an git-repo or path into text for LLM chats";
+  description =
+    "dump2llm: dump a Git repo or entire path as text for LLM chats";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs";
   inputs.flake-utils.url = "github:numtide/flake-utils";
@@ -24,11 +25,13 @@
                 --replace "/usr/bin/env bash" "${pkgs.bash}/bin/bash"
               chmod +x $out/bin/${pname}
             '';
-shellHook = '' export PATH=${pkgs.bash}/bin:$PATH
+            shellHook = ''
+              export PATH=${pkgs.bash}/bin:${pkgs.git}/bin:$PATH
             '';
 
             meta = with pkgs.lib; {
-              description = "dumps an git-repo or path into text for LLM chats";
+              description =
+                "dump a Git repo or entire path as text for LLM chats";
               homepage = "https://github.com/willyrgf/dump2llm";
               license = licenses.mit;
               platforms = platforms.all;
@@ -46,9 +49,7 @@ shellHook = '' export PATH=${pkgs.bash}/bin:$PATH
           };
         };
 
-        devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [ bash git ];
-        };
-      }
-    );
+        devShells.default =
+          pkgs.mkShell { buildInputs = with pkgs; [ bash git ]; };
+      });
 }
