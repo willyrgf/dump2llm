@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+  echo "Usage: $0 <git-repo-url|local-path>"
+  exit 1
+fi
+
+INPUT=$1
+
+# 1. Determine working directory
+if [ -d "$INPUT" ]; then
+  WORKDIR=$(realpath "$INPUT")
+  CLEANUP=false
+else
+  WORKDIR=$(mktemp -d)
+  CLEANUP=true
+  git clone --depth=1 "$INPUT" "$WORKDIR"
+fi
+
+# 2. Cleanup temp clone on exit
+trap '[[ $CLEANUP = true ]] && rm -rf "$WORKDIR"' EXIT
+
+# 3. Dump files, respecting .gitignore if it's a Git repo
+if [ -d "$WORKDIR/.git" ]; then
+  cd "$WORKDIR"
+  # lists tracked + untracked-but-not-ignored
+  git ls-files --cached --others --exclude-standard | sort | \
+  while IFS= read -r rel; do
+    printf '\n<<< FILE: %s >>>\n' "$rel"
+    cat "$rel"
+    printf '\n<<< END OF %s >>>\n' "$rel"
+  done
+else
+  # fallback: dump everything except .git dir
+  find "$WORKDIR" -type f ! -path "*/.git/*" | sort | \
+  while IFS= read -r file; do
+    rel="${file#$WORKDIR/}"
+    printf '\n<<< FILE: %s >>>\n' "$rel"
+    cat "$file"
+    printf '\n<<< END OF %s >>>\n' "$rel"
+  done
+fi
