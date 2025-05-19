@@ -14,7 +14,7 @@
 
           dump2llm = pkgs.stdenv.mkDerivation rec {
             pname = "dump2llm";
-            version = "0.0.2";
+            version = "0.0.3";
             src = ./.;
 
             buildInputs = with pkgs; [ bash git ];
