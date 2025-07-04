@@ -18,6 +18,24 @@
             src = ./.;
 
             buildInputs = with pkgs; [ bash git ];
+            
+            doCheck = true;
+            
+            checkPhase = ''
+              runHook preCheck
+              
+              # set up environment for tests
+              export PATH=${pkgs.bash}/bin:${pkgs.git}/bin:$PATH
+              
+              # make test script executable
+              chmod +x dump2llm_test
+              
+              # run the test suite
+              echo "Running dump2llm test suite..."
+              ./dump2llm_test
+              
+              runHook postCheck
+            '';
 
             installPhase = ''
               mkdir -p $out/bin
