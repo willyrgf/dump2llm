@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage() { echo "Usage: $0 [--ignore path[,path...]] <git-repo-url|local-path>"; exit 1; }
+usage() {
+    echo "Usage: $0 [--ignore path[,path...]] <inputs...>"
+    echo "Inputs can be:"
+    echo "  - Git repository URLs"
+    echo "  - Local directories"
+    echo "  - Individual files"
+    echo "  - Glob patterns (*.js, **/*.py, etc.)"
+    echo "  - Mix of above"
+    exit 1
+}
 
 # ── option parsing ────────────────────────────────────────────────────────────
 declare -a IGNORE=()
@@ -14,39 +23,135 @@ while [[ $# -gt 0 ]]; do
     *)        break ;;
   esac
 done
-[[ $# -eq 1 ]] || usage
-INPUT=$1
+[[ $# -ge 1 ]] || usage
+INPUTS=("$@")
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 _is_text() { [ -f "$1" ] && grep -Iq . "$1" >/dev/null 2>&1; }
 _skip()   { for p in "${IGNORE[@]-}"; do [[ -n $p && $1 == $p* ]] && return 0; done; return 1; }
 _dump()   { printf '\n<<< FILE: %s >>>\n' "$1"; cat "$2"; printf '\n<<< END OF %s >>>\n' "$1"; }
 
-# ── prepare working tree (clone if needed) ────────────────────────────────────
-CLEAN=false
-if [ -d "$INPUT" ]; then
-  WORK=$(realpath "$INPUT")
-else
-  WORK=$(mktemp -d)
-  git clone --depth=1 "$INPUT" "$WORK"
-  CLEAN=true
-fi
-trap '[[ $CLEAN == true ]] && rm -rf "$WORK"' EXIT
+_detect_input_type() {
+    local input=$1
+    if [[ "$input" =~ ^https?:// ]] || [[ "$input" =~ \.git$ ]]; then
+        echo "git_url"
+    elif [[ -d "$input" ]]; then
+        echo "directory"
+    elif [[ "$input" == *"**/"* ]]; then
+        echo "recursive_glob"
+    elif [[ "$input" == *"*"* ]] || [[ "$input" == *"?"* ]]; then
+        echo "single_glob"
+    else
+        # Default to file (even if it doesn't exist yet)
+        echo "file"
+    fi
+}
 
-# ── build list of candidate files (relative paths) ────────────────────────────
-if git -C "$WORK" rev-parse --is-inside-work-tree &>/dev/null; then
-  ROOT=$(git -C "$WORK" rev-parse --show-toplevel)
-  cd "$ROOT"
-  SUBDIR=${WORK#"$ROOT"/};                                   # "" if WORK==ROOT
-  PREFIX=$([ -n "$SUBDIR" ] && echo "$SUBDIR/")
-  git ls-files --cached --others --exclude-standard -- "$SUBDIR" |
-    sed "s#^$PREFIX##"                                     # strip leading subdir/
-else
-  find "$WORK" -type f ! -path '*/.git/*' | sed "s#^$WORK/##"
-fi |
-  sort | while IFS= read -r rel; do
-    _skip "$rel" && continue
-    path="$WORK/$rel"
-    _is_text "$path" || continue
-    _dump "$rel" "$path"
-  done
+collect_files_from_recursive_glob() {
+    local pattern=$1
+    local file_pattern="${pattern##**/}"  # Extract *.py from **/*.py
+    
+    while IFS= read -r -d '' file; do
+        all_files+=("$file")
+    done < <(find . -name "$file_pattern" -type f -print0 2>/dev/null)
+}
+
+collect_files_from_single_glob() {
+    local pattern=$1
+    
+    while IFS= read -r -d '' file; do
+        all_files+=("$file")
+    done < <(find . -maxdepth 1 -name "$pattern" -type f -print0 2>/dev/null)
+}
+
+collect_files_from_directory() {
+    local dir=$1
+    
+    if git -C "$dir" rev-parse --is-inside-work-tree &>/dev/null; then
+        # Git repository logic
+        local root=$(git -C "$dir" rev-parse --show-toplevel)
+        local old_pwd=$(pwd)
+        cd "$root"
+        local subdir=${dir#"$root"/}
+        local prefix=$([ -n "$subdir" ] && echo "$subdir/")
+        
+        while IFS= read -r rel; do
+            local full_path="$root/$rel"
+            all_files+=("$full_path")
+        done < <(git ls-files --cached --others --exclude-standard -- "$subdir" | sed "s#^$prefix##")
+        cd "$old_pwd"
+    else
+        # Non-git directory
+        while IFS= read -r file; do
+            all_files+=("$file")
+        done < <(find "$dir" -type f ! -path '*/.git/*')
+    fi
+}
+
+# ── process all inputs ────────────────────────────────────────────────────────
+declare -a all_files=()
+declare -a temp_dirs=()     # Track temporary directories for cleanup
+
+# Function to clean up temporary directories
+cleanup_temp_dirs() {
+    if [[ ${#temp_dirs[@]} -gt 0 ]]; then
+        for temp_dir in "${temp_dirs[@]}"; do
+            [[ -d "$temp_dir" ]] && rm -rf "$temp_dir"
+        done
+    fi
+}
+trap cleanup_temp_dirs EXIT
+
+# Process each input
+for input in "${INPUTS[@]}"; do
+    case "$(_detect_input_type "$input")" in
+        "git_url")
+            # Clone and process git repository
+            work_dir=$(mktemp -d)
+            temp_dirs+=("$work_dir")
+            git clone --depth=1 "$input" "$work_dir"
+            collect_files_from_directory "$work_dir"
+            ;;
+        "directory")
+            collect_files_from_directory "$input"
+            ;;
+        "file")
+            [[ -f "$input" ]] && all_files+=("$input")
+            ;;
+        "recursive_glob")
+            collect_files_from_recursive_glob "$input"
+            ;;
+        "single_glob")
+            collect_files_from_single_glob "$input"
+            ;;
+    esac
+done
+
+# Process and output all collected files with deduplication
+if [[ ${#all_files[@]} -gt 0 ]]; then
+    declare -a processed_files=()
+    for file in "${all_files[@]}"; do
+        abs_path=$(realpath "$file" 2>/dev/null || echo "$file")
+        
+        # Simple deduplication check
+        already_processed=false
+        for processed in "${processed_files[@]:-}"; do
+            if [[ "$processed" == "$abs_path" ]]; then
+                already_processed=true
+                break
+            fi
+        done
+        [[ "$already_processed" == true ]] && continue
+        processed_files+=("$abs_path")
+        
+        # Get relative path for display
+        display_path="$file"
+        if [[ "$file" == "$PWD/"* ]]; then
+            display_path="${file#"$PWD/"}"
+        fi
+        
+        _is_text "$file" || continue
+        _skip "$display_path" && continue
+        _dump "$display_path" "$file"
+    done
+fi
