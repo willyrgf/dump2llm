@@ -19,6 +19,12 @@
 
             buildInputs = with pkgs; [ bash git ];
 
+            patchPhase = ''
+              runHook prePatch
+              patchShebangs .
+              runHook postPatch
+            '';
+
             doCheck = true;
 
             checkPhase = ''

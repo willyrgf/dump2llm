@@ -1,0 +1,55 @@
+name: Nix CI
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  BUILD_CMD: "nix build -L -v --log-format bar-with-logs"
+  RUN_CMD: "nix run .#default -L -v --log-format bar-with-logs -- --help"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixpkgs-unstable
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Nix flake check
+        run: |
+          nix flake check
+
+      # every build will trigger checkPhase which will run the `dump2llm_test`
+      - name: Nix build default app and run tests
+        run: |
+          echo $BUILD_CMD
+          eval $BUILD_CMD
+
+      - name: Run dump2llm --help
+        run: |
+          echo $RUN_CMD
+          # build the flake and run the help command
+          output=$(eval $RUN_CMD || true)
+
+          # echo the output for debugging
+          echo "Help output:"
+          echo "$output"
+
+          # Check if the output contains expected text
+          if echo "$output" | grep -q 'Inputs can be'; then
+            echo "✓ Help text found"
+          else
+            echo "✗ Help text not found"
+            exit 1
+          fi
