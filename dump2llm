@@ -9,6 +9,12 @@ usage() {
     echo "  - Individual files"
     echo "  - Glob patterns (*.js, **/*.py, etc.)"
     echo "  - Mix of above"
+    echo
+    echo "Examples (markdown files):"
+    echo "  $0 README.md"
+    echo "  $0 docs/*.md"
+    echo "  $0 docs/**/*.md"
+    echo "  $0 --ignore docs/drafts docs/**/*.md"
     exit 1
 }
 
@@ -16,6 +22,7 @@ usage() {
 declare -a IGNORE=()
 while [[ $# -gt 0 ]]; do
   case $1 in
+    -h|--help) usage ;;
     --ignore) shift || usage
               IFS=',' read -ra tmp <<<"$1"
               IGNORE+=("${tmp[@]}"); shift ;;
